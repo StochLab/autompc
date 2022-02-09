@@ -5,6 +5,7 @@ import sys, time
 
 # External library includes
 import numpy as np
+import mujoco_py
 
 # Project includes
 from .benchmark import Benchmark
@@ -51,23 +52,114 @@ class HalfcheetahCost(Cost):
         self._is_twice_diff = False
         self._has_goal = False
         self.env = env
+        self.fin_step = 1e-6
 
     def __call__(self, traj):
         cum_reward = 0.0
         for i in range(len(traj)-1):
-            reward_ctrl = -0.1 * np.square(traj[i].ctrl).sum()
-            reward_run = (traj[i+1, "x0"] - traj[i, "x0"]) / self.env.dt
+            reward_ctrl = self.eval_ctrl_cost(traj[i].ctrl)
+            reward_run = self.eval_obs_cost(traj[i].obs)
             cum_reward += reward_ctrl + reward_run
+        
+        cum_reward += self.eval_term_obs_cost(traj[-1].obs)
         return 200 - cum_reward
 
-    def eval_obs_cost(self):
-        raise NotImplementedError
+    def eval_obs_cost(self, obs):
+        qpos, qvel = obs[0:9], obs[9:]
 
-    def eval_term_obs_cost(self):
-        raise NotImplementedError
+        # speed reward
+        reward_velocity = qvel[0]
 
-    def eval_ctrl_cost(self):
-        raise NotImplementedError
+        # height velocity reward
+        reward_height = -(0 - qvel[1])
+
+        return 100 - (reward_velocity + reward_height)
+
+    def eval_term_obs_cost(self, term_obs):
+        qpos, qvel = term_obs[0:9], term_obs[9:]
+
+        # speed reward
+        reward_velocity = qvel[0]
+
+        # height velocity reward
+        reward_height = -(0 - qvel[1])
+
+        return 100 - (reward_velocity + reward_height)
+
+    def eval_ctrl_cost(self, ctrl):
+        return 100 -0.1 * np.square(ctrl).sum()
+
+    def eval_term_obs_cost_hess(self, term_obs):
+        n = term_obs.shape[0]
+        Jac = np.zeros(n)
+        Hess = np.zeros((n, n))
+        for i in range(n):
+            ei = np.zeros(n)
+            ei[i] = 1
+            f1 = self.eval_term_obs_cost(term_obs + self.fin_step * ei)
+            f2 = self.eval_term_obs_cost(term_obs - self.fin_step * ei)
+            Jac[i] = (f1 - f2) / (2 * self.fin_step)
+            
+            for j in range(n):
+                ej = np.zeros(n)
+                ej[j] = 1
+                f1 = self.eval_term_obs_cost(term_obs + self.fin_step * ei + self.fin_step * ej)
+                f2 = self.eval_term_obs_cost(term_obs + self.fin_step * ei - self.fin_step * ej)
+                f3 = self.eval_term_obs_cost(term_obs - self.fin_step * ei + self.fin_step * ej)
+                f4 = self.eval_term_obs_cost(term_obs - self.fin_step * ei - self.fin_step * ej)
+                Hess[i, j] = (f1 - f2 - f3 + f4) / (4 * self.fin_step * self.fin_step)
+
+        cost = self.eval_term_obs_cost(term_obs)
+
+        return cost, Jac, Hess
+
+    def eval_obs_cost_hess(self, obs):
+        n = obs.shape[0]
+        Jac = np.zeros(n)
+        Hess = np.zeros((n, n))
+        for i in range(n):
+            ei = np.zeros(n)
+            ei[i] = 1
+            f1 = self.eval_obs_cost(obs + self.fin_step * ei)
+            f2 = self.eval_obs_cost(obs - self.fin_step * ei)
+            Jac[i] = (f1 - f2) / (2 * self.fin_step)
+            
+            for j in range(n):
+                ej = np.zeros(n)
+                ej[j] = 1
+                f1 = self.eval_obs_cost(obs + self.fin_step * ei + self.fin_step * ej)
+                f2 = self.eval_obs_cost(obs + self.fin_step * ei - self.fin_step * ej)
+                f3 = self.eval_obs_cost(obs - self.fin_step * ei + self.fin_step * ej)
+                f4 = self.eval_obs_cost(obs - self.fin_step * ei - self.fin_step * ej)
+                Hess[i, j] = (f1 - f2 - f3 + f4) / (4 * self.fin_step * self.fin_step)
+
+        cost = self.eval_obs_cost(obs)
+
+        return cost, Jac, Hess
+
+    def eval_ctrl_cost_hess(self, ctrl):
+        n = ctrl.shape[0]
+        Jac = np.zeros(n)
+        Hess = np.zeros((n, n))
+        for i in range(n):
+            ei = np.zeros(n)
+            ei[i] = 1
+            f1 = self.eval_ctrl_cost(ctrl + self.fin_step * ei)
+            f2 = self.eval_ctrl_cost(ctrl - self.fin_step * ei)
+            Jac[i] = (f1 - f2) / (2 * self.fin_step)
+            
+            for j in range(n):
+                ej = np.zeros(n)
+                ej[j] = 1
+                f1 = self.eval_ctrl_cost(ctrl + self.fin_step * ei + self.fin_step * ej)
+                f2 = self.eval_ctrl_cost(ctrl + self.fin_step * ei - self.fin_step * ej)
+                f3 = self.eval_ctrl_cost(ctrl - self.fin_step * ei + self.fin_step * ej)
+                f4 = self.eval_ctrl_cost(ctrl - self.fin_step * ei - self.fin_step * ej)
+                Hess[i, j] = (f1 - f2 - f3 + f4) / (4 * self.fin_step * self.fin_step)
+
+        cost = self.eval_ctrl_cost(ctrl)
+
+        return cost, Jac, Hess
 
 def gen_trajs(env, system, num_trajs=1000, traj_len=1000, seed=42):
     rng = np.random.default_rng(seed)
@@ -82,7 +174,7 @@ def gen_trajs(env, system, num_trajs=1000, traj_len=1000, seed=42):
             action = env.action_space.sample()
             traj[j-1].ctrl[:] = action
             #obs, reward, done, info = env.step(action)
-            obs = halfcheetah_dynamics(traj[j-1].obs[:], action)
+            obs = halfcheetah_dynamics(env, traj[j-1].obs[:], action)
             traj[j].obs[:] = obs
         trajs.append(traj)
     return trajs
@@ -91,7 +183,7 @@ def gen_trajs(env, system, num_trajs=1000, traj_len=1000, seed=42):
 class HalfcheetahBenchmark(Benchmark):
     """
     This benchmark uses the OpenAI gym halfcheetah benchmark and is consistent with the
-    experiments in the ICRA 2021 paper. The benchmark reuqires OpenAI gym and mujoco_py
+    experiments in the ICRA 2021 paper. The benchmark requires OpenAI gym and mujoco_py
     to be installed.  The performance metric is
     :math:`200-R` where :math:`R` is the gym reward.
     """
