@@ -118,6 +118,8 @@ class SINDy(Model):
             poly_basis = True if poly_basis == "true" else False
         self.poly_basis = poly_basis
         self.poly_degree = poly_degree
+        if type(poly_cross_terms) == str:
+            poly_cross_terms = True if poly_cross_terms == "true" else False
         self.poly_cross_terms = poly_cross_terms
         if type(trig_basis) == str:
             trig_basis = True if trig_basis == "true" else False
@@ -263,3 +265,12 @@ class SINDy(Model):
     def set_parameters(self, params):
         self.A = np.copy(params["A"])
         self.B = np.copy(params["B"])
+
+    def set_model_params(self, params):
+        self.model = ps.SINDy()
+        self.model.fit()
+        print("Setting model parameters")
+        print(self.model.get_params())
+        print(self.model.set_params.__doc__)
+        self.model.set_params(params)
+        

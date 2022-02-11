@@ -130,6 +130,7 @@ class IterativeLQR(Controller):
         # handy variables...
         states, new_states = np.zeros((2, H + 1, dimx))
         ctrls, new_ctrls = np.zeros((2, H, dimu))
+        # Initialize Linear Policies
         ls_states = np.zeros((ls_max_iter, H + 1, dimx))
         ls_ctrls = np.zeros((ls_max_iter, H, dimu))
         Ks = np.zeros((H, dimu, dimx))
@@ -231,19 +232,18 @@ class IterativeLQR(Controller):
                 Jacs[:, :, dimx:] = jus
                 new_obj = eval_obj(new_states, new_ctrls)
             if (not ls_success and new_obj > obj + 1e-3) or best_alpha is None:
-                if not silent:
-                    print('Line search fails...')
+                print('Line search fails...')
                 break
             else:
-                if self.verbose and not silent:
+                if self.verbose:
                     print('alpha is successful at %f with cost from %f to %f' % (best_alpha, obj, new_obj))
                 pass
             # return since update of action is small
-            if self.verbose and not silent:
+            if self.verbose:
                 print('u update', np.linalg.norm(new_ctrls - ctrls))
             du_norm = np.linalg.norm(new_ctrls - ctrls)
             if du_norm < u_threshold:
-                if self.verbose and not silent:
+                if self.verbose:
                     print('Break since update of control is small at %f' % (np.linalg.norm(new_ctrls - ctrls)))
                 converged = True
             # ready to swap...
@@ -251,17 +251,16 @@ class IterativeLQR(Controller):
             ctrls = np.copy(new_ctrls)
             obj = new_obj
             if converged:
-                if not silent:
-                    print('Convergence achieved within %d iterations' % itr)
-                    print('Cost update from %f to %f' % (initcost, obj))
-                    print('Final state is ', states[-1])
+                print('Convergence achieved within %d iterations' % itr)
+                print('Cost update from %f to %f' % (initcost, obj))
+                print('Final state is ', states[-1])
                 break
-        if not converged and not silent:
+        if not converged:
             print('ilqr fails to converge, try a new guess? Last u update is %f ks norm is %f' % (du_norm, ks_norm))
             print('ilqr is not converging...')
         return converged, states, ctrls, Ks, ks
 
-    def run(self, constate, new_obs, silent=True):
+    def run(self, constate, new_obs, silent=True, whole_horizon=False):
         """Here I am assuming I reuse the controller for half horizon"""
         if self._guess is None:
             self._guess = np.zeros((self.horizon, self.system.ctrl_dim))
@@ -269,4 +268,8 @@ class IterativeLQR(Controller):
                 silent=silent)
         self._states = states
         self._guess = np.concatenate((ctrls[1:], np.zeros((1, self.system.ctrl_dim))), axis=0)
-        return ctrls[0], None
+
+        if whole_horizon:
+            return ctrls, None
+        else:
+            return ctrls[0], None
